@@ -27,3 +27,31 @@ class AbstractRemoteObject():
     @abstractmethod
     def delete_file(self):
         pass
+
+
+class RemoteCluster():
+    """This is a abstract class that all Initiator classes
+    will inherit to run a cluster on a remote server."""
+
+    def __init__(self):
+        pass
+
+    @abstractmethod
+    def register_secret(self):
+        pass
+
+    @abstractmethod
+    def unregister_secret(self):
+        pass
+
+    @abstractmethod
+    def shutdown(self):
+        pass
+
+    @abstractmethod
+    def cancel(self):
+        pass
+
+    @abstractmethod
+    def run(self):
+        pass
