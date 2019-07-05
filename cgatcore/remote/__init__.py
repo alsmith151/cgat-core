@@ -1,8 +1,8 @@
 import os
 import sys
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 
-class AbstractRemoteObject():
+class AbstractRemoteObject(ABC):
     '''This is an abstract class that all RemoteObjects will
        inherit from. This is an abstract class to ridgidly define
        the abstract methods of this RemoteObject class'''
@@ -29,7 +29,7 @@ class AbstractRemoteObject():
         pass
 
 
-class RemoteCluster():
+class RemoteCluster(ABC):
     """This is a abstract class that all Initiator classes
     will inherit to run a cluster on a remote server."""
 
