@@ -863,6 +863,18 @@ def start(parser=None,
 
         if add_cluster_options:
             group = OptionGroup(parser, "cluster options")
+            group.add_option("--singularity", dest="singularity",
+                             action="store_true",
+                             help="Run pipeline using singularity container [%default].")
+            group.add_option("--kubernetes", dest="kubernetes",
+                             action="store_true",
+                             help="run using kubernates cluster.")
+            group.add_option("--remote-provider", dest="default_remote_provider",
+                             action="string",
+                             help="default remote provider to use instead of local files (e.g. S3).")
+            group.add_option("--remote-prefix", dest="default_remote_prefix",
+                             action="string",
+                             help="default remote provider (e.g. the bucket name).")
             group.add_option("--no-cluster", "--local", dest="without_cluster",
                              action="store_true",
                              help="do no use cluster - run locally [%default].")
@@ -1114,6 +1126,18 @@ def start(parser=None,
 
         if add_cluster_options:
             group = parser.add_argument_group("cluster options")
+            group.add_argument("--singularity", dest="singularity",
+                               action="store_true",
+                               help="run using singularity container.")
+            group.add_argument("--kubernetes", dest="kubernetes",
+                               action="store_true",
+                               help="run using kubernates cluster.")
+            group.add_argument("--remote-provider", dest="default_remote_provider",
+                               action=str,
+                               help="default remote provider to use instead of local files (e.g. S3).")
+            group.add_argument("--remote-prefix", dest="default_remote_prefix",
+                               action=str,
+                               help="default remote provider (e.g. the bucket name).")
             group.add_argument("--no-cluster", "--local", dest="without_cluster",
                                action="store_true",
                                help="do no use cluster - run locally.")
