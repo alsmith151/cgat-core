@@ -869,10 +869,10 @@ def start(parser=None,
             group.add_option("--kubernetes", dest="kubernetes",
                              action="store_true",
                              help="run using kubernates cluster.")
-            group.add_option("--remote-provider", dest="default_remote_provider",
+            group.add_option("--default-remote-provider", dest="default_remote_provider",
                              action="string",
                              help="default remote provider to use instead of local files (e.g. S3).")
-            group.add_option("--remote-prefix", dest="default_remote_prefix",
+            group.add_option("--default-remote-prefix", dest="default_remote_prefix",
                              action="string",
                              help="default remote provider (e.g. the bucket name).")
             group.add_option("--no-cluster", "--local", dest="without_cluster",
@@ -1065,6 +1065,13 @@ def start(parser=None,
         if global_options.tracing == "function":
             sys.settrace(trace_calls)
 
+        # kubernates needs to be supplied with default_remote_provider anmd default_remote_prefix
+        if global_options.kubernates and (not global_options.default_remote_provider 
+                                          or not global_options.default_remote_prefix):
+            E.warn('''Error: --kubernates must be used with
+                      --default-remote-provider and --default-remote-prefix''')
+            stop()
+
         return global_options, global_args
 
     # Argparse options
@@ -1132,10 +1139,10 @@ def start(parser=None,
             group.add_argument("--kubernetes", dest="kubernetes",
                                action="store_true",
                                help="run using kubernates cluster.")
-            group.add_argument("--remote-provider", dest="default_remote_provider",
+            group.add_argument("--default-remote-provider", dest="default_remote_provider",
                                action=str,
                                help="default remote provider to use instead of local files (e.g. S3).")
-            group.add_argument("--remote-prefix", dest="default_remote_prefix",
+            group.add_argument("--default-remote-prefix", dest="default_remote_prefix",
                                action=str,
                                help="default remote provider (e.g. the bucket name).")
             group.add_argument("--no-cluster", "--local", dest="without_cluster",
@@ -1308,6 +1315,14 @@ def start(parser=None,
 
         if global_args.tracing == "function":
             sys.settrace(trace_calls)
+
+        # kubernates needs to be supplied with default_remote_provider anmd default_remote_prefix
+        if global_args.kubernates and (not global_args.default_remote_provider 
+                                          or not global_args.default_remote_prefix):
+            E.warn('''Error: --kubernates must be used with
+                      --default-remote-provider and --default-remote-prefix''')
+            stop()
+
 
         if unknowns:
             return global_args, unknown
