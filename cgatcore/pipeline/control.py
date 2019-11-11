@@ -48,6 +48,7 @@ from cgatcore.pipeline.parameters import input_validation, get_params, get_param
 from cgatcore.pipeline.utils import get_caller, get_caller_locals, is_test
 from cgatcore.pipeline.execution import execute, start_session,\
     close_session
+from cgatcore.pipeline.cloud import run_kubernetes
 
 
 # redirect os.stat and other OS utilities to cached versions to speed
@@ -1227,233 +1228,239 @@ def run_workflow(args, argv=None, pipeline=None):
     argv is kept for backwards compatibility.
     """
 
-    logger = logging.getLogger("cgatcore.pipeline")
+    if args.kubernates:
 
-    logger.debug("starting run_workflow with action {}".format(args.pipeline_action))
-
-    if args.force_run:
-        if args.force_run == "all":
-            forcedtorun_tasks = ruffus.pipeline_get_task_names()
-        else:
-            forcedtorun_tasks = args.pipeline_targets
+        run_kubernates(args, argv, pipeline)
+ 
     else:
-        forcedtorun_tasks = []
 
-    # create local scratch if it does not already exists. Note that
-    # directory itself will be not deleted while its contents should
-    # be cleaned up.
-    if not os.path.exists(get_params()["tmpdir"]):
-        logger.warn("local temporary directory {} did not exist - created".format(
-            get_params()["tmpdir"]))
-        try:
-            os.makedirs(get_params()["tmpdir"])
-        except OSError:
-            # file exists
-            pass
+        logger = logging.getLogger("cgatcore.pipeline")
 
-    logger.info("temporary directory is {}".format(get_params()["tmpdir"]))
+        logger.debug("starting run_workflow with action {}".format(args.pipeline_action))
 
-    # set multiprocess to a sensible setting if there is no cluster
-    run_on_cluster = HAS_DRMAA is True and not args.without_cluster
-    if args.multiprocess is None:
-        if not run_on_cluster:
-            args.multiprocess = int(math.ceil(
-                multiprocessing.cpu_count() / 2.0))
-        else:
-            args.multiprocess = 40
-
-    # see inputValidation function in Parameters.py
-    if args.input_validation:
-        input_validation(get_params(), sys.argv[0])
-
-    elif args.pipeline_action == "debug":
-        # create the session proxy
-        start_session()
-
-        method_name = args.pipeline_targets[0]
-        caller = get_caller()
-        method = getattr(caller, method_name)
-        method(*args.pipeline_targets[1:])
-
-    elif args.pipeline_action in ("make",
-                                  "show",
-                                  "state",
-                                  "svg",
-                                  "plot",
-                                  "dot",
-                                  "touch",
-                                  "regenerate"):
-
-        messenger = None
-        try:
-            with cache_os_functions():
-                if args.pipeline_action == "make":
-
-                    if not args.without_cluster and not HAS_DRMAA and not get_params()['testing']:
-                        E.critical("DRMAA API not found so cannot talk to a cluster.")
-                        E.critical("Please use --local to run the pipeline"
-                                   " on this host: {}".format(os.uname()[1]))
-                        sys.exit(-1)
-
-                    # get tasks to be done. This essentially replicates
-                    # the state information within ruffus.
-                    stream = StringIO()
-                    ruffus.pipeline_printout(
-                        stream,
-                        args.pipeline_targets,
-                        verbose=5,
-                        pipeline=pipeline,
-                        checksum_level=args.ruffus_checksums_level)
-
-                    messenger = LoggingFilterProgress(stream.getvalue())
-                    logger.addFilter(messenger)
-
-                    global task
-                    if args.without_cluster:
-                        # use ThreadPool to avoid taking multiple CPU for pipeline
-                        # controller.
-                        opts = {"multithread": args.multiprocess}
-                    else:
-                        # use cooperative multitasking instead of multiprocessing.
-                        opts = {"multiprocess": args.multiprocess,
-                                "pool_manager": "gevent"}
-                        # create the session proxy
-                        start_session()
-
-                    logger.info("current directory is {}".format(os.getcwd()))
-
-                    ruffus.pipeline_run(
-                        args.pipeline_targets,
-                        forcedtorun_tasks=forcedtorun_tasks,
-                        logger=logger,
-                        verbose=args.loglevel,
-                        log_exceptions=args.log_exceptions,
-                        exceptions_terminate_immediately=args.exceptions_terminate_immediately,
-                        checksum_level=args.ruffus_checksums_level,
-                        pipeline=pipeline,
-                        one_second_per_job=False,
-                        **opts
-                    )
-
-                    close_session()
-
-                elif args.pipeline_action == "show":
-                    ruffus.pipeline_printout(
-                        args.stdout,
-                        args.pipeline_targets,
-                        forcedtorun_tasks=forcedtorun_tasks,
-                        verbose=args.loglevel,
-                        pipeline=pipeline,
-                        checksum_level=args.ruffus_checksums_level)
-
-                elif args.pipeline_action == "touch":
-                    ruffus.pipeline_run(
-                        args.pipeline_targets,
-                        touch_files_only=True,
-                        verbose=args.loglevel,
-                        pipeline=pipeline,
-                        checksum_level=args.ruffus_checksums_level)
-
-                elif args.pipeline_action == "regenerate":
-                    ruffus.pipeline_run(
-                        args.pipeline_targets,
-                        touch_files_only=args.ruffus_checksums_level,
-                        pipeline=pipeline,
-                        verbose=args.loglevel)
-
-                elif args.pipeline_action == "svg":
-                    ruffus.pipeline_printout_graph(
-                        args.stdout.buffer,
-                        args.pipeline_format,
-                        args.pipeline_targets,
-                        forcedtorun_tasks=forcedtorun_tasks,
-                        pipeline=pipeline,
-                        checksum_level=args.ruffus_checksums_level)
-
-                elif args.pipeline_action == "state":
-                    ruffus.ruffus_return_dag(
-                        args.stdout,
-                        target_tasks=args.pipeline_targets,
-                        forcedtorun_tasks=forcedtorun_tasks,
-                        verbose=args.loglevel,
-                        pipeline=pipeline,
-                        checksum_level=args.ruffus_checksums_level)
-
-                elif args.pipeline_action == "plot":
-                    outf, filename = tempfile.mkstemp()
-                    ruffus.pipeline_printout_graph(
-                        os.fdopen(outf, "wb"),
-                        args.pipeline_format,
-                        args.pipeline_targets,
-                        pipeline=pipeline,
-                        checksum_level=args.ruffus_checksums_level)
-                    execute("inkscape %s" % filename)
-                    os.unlink(filename)
-
-        except ruffus.ruffus_exceptions.RethrownJobError as ex:
-
-            if not args.debug:
-                E.error("%i tasks with errors, please see summary below:" %
-                        len(ex.args))
-                for idx, e in enumerate(ex.args):
-                    task, job, error, msg, traceback = e
-
-                    if task is None:
-                        # this seems to be errors originating within ruffus
-                        # such as a missing dependency
-                        # msg then contains a RethrownJobJerror
-                        msg = str(msg)
-                    else:
-                        task = re.sub("__main__.", "", task)
-                        job = re.sub(r"\s", "", job)
-
-                    # display only single line messages
-                    if len([x for x in msg.split("\n") if x != ""]) > 1:
-                        msg = ""
-
-                    E.error("%i: Task=%s Error=%s %s: %s" %
-                            (idx, task, error, job, msg))
-
-                E.error("full traceback is in %s" % args.pipeline_logfile)
-
-                logger.error("start of all error messages")
-                logger.error(ex)
-                logger.error("end of all error messages")
-
-                raise ValueError("pipeline failed with %i errors" % len(ex.args)) from ex
+        if args.force_run:
+            if args.force_run == "all":
+                forcedtorun_tasks = ruffus.pipeline_get_task_names()
             else:
-                raise
+                forcedtorun_tasks = args.pipeline_targets
+        else:
+            forcedtorun_tasks = []
 
-    elif args.pipeline_action == "dump":
-        args.stdout.write((json.dumps(get_params())) + "\n")
+        # create local scratch if it does not already exists. Note that
+        # directory itself will be not deleted while its contents should
+        # be cleaned up.
+        if not os.path.exists(get_params()["tmpdir"]):
+            logger.warn("local temporary directory {} did not exist - created".format(
+                get_params()["tmpdir"]))
+            try:
+                os.makedirs(get_params()["tmpdir"])
+            except OSError:
+                # file exists
+                pass
 
-    elif args.pipeline_action == "printconfig":
-        E.info("printing out pipeline parameters: ")
-        p = get_params()
-        for k in sorted(get_params()):
-            print(k, "=", p[k])
-        print_config_files()
+        logger.info("temporary directory is {}".format(get_params()["tmpdir"]))
 
-    elif args.pipeline_action == "config":
-        # Level needs to be 2:
-        # 0th level -> cgatflow.py
-        # 1st level -> Control.py
-        # 2nd level -> pipeline_xyz.py
-        f = sys._getframe(2)
-        caller = f.f_globals["__file__"]
-        pipeline_path = os.path.splitext(caller)[0]
-        general_path = os.path.join(os.path.dirname(pipeline_path),
-                                    "configuration")
-        write_config_files(pipeline_path, general_path)
+        # set multiprocess to a sensible setting if there is no cluster
+        run_on_cluster = HAS_DRMAA is True and not args.without_cluster
+        if args.multiprocess is None:
+            if not run_on_cluster:
+                args.multiprocess = int(math.ceil(
+                    multiprocessing.cpu_count() / 2.0))
+            else:
+                args.multiprocess = 40
 
-    elif args.pipeline_action == "clone":
-        clone_pipeline(args.pipeline_targets[0])
+        # see inputValidation function in Parameters.py
+        if args.input_validation:
+            input_validation(get_params(), sys.argv[0])
 
-    else:
-        raise ValueError("unknown pipeline action %s" %
-                         args.pipeline_action)
+        elif args.pipeline_action == "debug":
+            # create the session proxy
+            start_session()
 
-    E.stop(logger=get_logger())
+            method_name = args.pipeline_targets[0]
+            caller = get_caller()
+            method = getattr(caller, method_name)
+            method(*args.pipeline_targets[1:])
+
+        elif args.pipeline_action in ("make",
+                                      "show",
+                                      "state",
+                                      "svg",
+                                      "plot",
+                                      "dot",
+                                      "touch",
+                                      "regenerate"):
+
+            messenger = None
+            try:
+                with cache_os_functions():
+                    if args.pipeline_action == "make":
+
+                        if not args.without_cluster and not HAS_DRMAA and not get_params()['testing']:
+                            E.critical("DRMAA API not found so cannot talk to a cluster.")
+                            E.critical("Please use --local to run the pipeline"
+                                       " on this host: {}".format(os.uname()[1]))
+                            sys.exit(-1)
+
+                        # get tasks to be done. This essentially replicates
+                        # the state information within ruffus.
+                        stream = StringIO()
+                        ruffus.pipeline_printout(
+                            stream,
+                            args.pipeline_targets,
+                            verbose=5,
+                            pipeline=pipeline,
+                            checksum_level=args.ruffus_checksums_level)
+
+                        messenger = LoggingFilterProgress(stream.getvalue())
+                        logger.addFilter(messenger)
+
+                        global task
+                        if args.without_cluster:
+                            # use ThreadPool to avoid taking multiple CPU for pipeline
+                            # controller.
+                            opts = {"multithread": args.multiprocess}
+                        else:
+                            # use cooperative multitasking instead of multiprocessing.
+                            opts = {"multiprocess": args.multiprocess,
+                                    "pool_manager": "gevent"}
+                            # create the session proxy
+                            start_session()
+
+                        logger.info("current directory is {}".format(os.getcwd()))
+
+                        ruffus.pipeline_run(
+                            args.pipeline_targets,
+                            forcedtorun_tasks=forcedtorun_tasks,
+                            logger=logger,
+                            verbose=args.loglevel,
+                            log_exceptions=args.log_exceptions,
+                            exceptions_terminate_immediately=args.exceptions_terminate_immediately,
+                            checksum_level=args.ruffus_checksums_level,
+                            pipeline=pipeline,
+                            one_second_per_job=False,
+                            **opts
+                        )
+
+                        close_session()
+
+                    elif args.pipeline_action == "show":
+                        ruffus.pipeline_printout(
+                            args.stdout,
+                            args.pipeline_targets,
+                            forcedtorun_tasks=forcedtorun_tasks,
+                            verbose=args.loglevel,
+                            pipeline=pipeline,
+                            checksum_level=args.ruffus_checksums_level)
+
+                    elif args.pipeline_action == "touch":
+                        ruffus.pipeline_run(
+                            args.pipeline_targets,
+                            touch_files_only=True,
+                            verbose=args.loglevel,
+                            pipeline=pipeline,
+                            checksum_level=args.ruffus_checksums_level)
+
+                    elif args.pipeline_action == "regenerate":
+                        ruffus.pipeline_run(
+                            args.pipeline_targets,
+                            touch_files_only=args.ruffus_checksums_level,
+                            pipeline=pipeline,
+                            verbose=args.loglevel)
+
+                    elif args.pipeline_action == "svg":
+                        ruffus.pipeline_printout_graph(
+                            args.stdout.buffer,
+                            args.pipeline_format,
+                            args.pipeline_targets,
+                            forcedtorun_tasks=forcedtorun_tasks,
+                            pipeline=pipeline,
+                            checksum_level=args.ruffus_checksums_level)
+
+                    elif args.pipeline_action == "state":
+                        ruffus.ruffus_return_dag(
+                            args.stdout,
+                            target_tasks=args.pipeline_targets,
+                            forcedtorun_tasks=forcedtorun_tasks,
+                            verbose=args.loglevel,
+                            pipeline=pipeline,
+                            checksum_level=args.ruffus_checksums_level)
+
+                    elif args.pipeline_action == "plot":
+                        outf, filename = tempfile.mkstemp()
+                        ruffus.pipeline_printout_graph(
+                            os.fdopen(outf, "wb"),
+                            args.pipeline_format,
+                            args.pipeline_targets,
+                            pipeline=pipeline,
+                            checksum_level=args.ruffus_checksums_level)
+                        execute("inkscape %s" % filename)
+                        os.unlink(filename)
+
+            except ruffus.ruffus_exceptions.RethrownJobError as ex:
+
+                if not args.debug:
+                    E.error("%i tasks with errors, please see summary below:" %
+                            len(ex.args))
+                    for idx, e in enumerate(ex.args):
+                        task, job, error, msg, traceback = e
+
+                        if task is None:
+                            # this seems to be errors originating within ruffus
+                            # such as a missing dependency
+                            # msg then contains a RethrownJobJerror
+                            msg = str(msg)
+                        else:
+                            task = re.sub("__main__.", "", task)
+                            job = re.sub(r"\s", "", job)
+
+                        # display only single line messages
+                        if len([x for x in msg.split("\n") if x != ""]) > 1:
+                            msg = ""
+
+                        E.error("%i: Task=%s Error=%s %s: %s" %
+                                (idx, task, error, job, msg))
+
+                    E.error("full traceback is in %s" % args.pipeline_logfile)
+
+                    logger.error("start of all error messages")
+                    logger.error(ex)
+                    logger.error("end of all error messages")
+
+                    raise ValueError("pipeline failed with %i errors" % len(ex.args)) from ex
+                else:
+                    raise
+
+        elif args.pipeline_action == "dump":
+            args.stdout.write((json.dumps(get_params())) + "\n")
+
+        elif args.pipeline_action == "printconfig":
+            E.info("printing out pipeline parameters: ")
+            p = get_params()
+            for k in sorted(get_params()):
+                print(k, "=", p[k])
+            print_config_files()
+
+        elif args.pipeline_action == "config":
+            # Level needs to be 2:
+            # 0th level -> cgatflow.py
+            # 1st level -> Control.py
+            # 2nd level -> pipeline_xyz.py
+            f = sys._getframe(2)
+            caller = f.f_globals["__file__"]
+            pipeline_path = os.path.splitext(caller)[0]
+            general_path = os.path.join(os.path.dirname(pipeline_path),
+                                        "configuration")
+            write_config_files(pipeline_path, general_path)
+
+        elif args.pipeline_action == "clone":
+            clone_pipeline(args.pipeline_targets[0])
+
+        else:
+            raise ValueError("unknown pipeline action %s" %
+                             args.pipeline_action)
+
+        E.stop(logger=get_logger())
 
 
 def main(argv=None):
