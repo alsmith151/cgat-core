@@ -39,7 +39,7 @@ from cgatcore.pipeline.cluster import get_queue_manager, JobInfo
 try:
     import drmaa
     HAS_DRMAA = True
-except (ImportError, RuntimeError):
+except (ImportError, RuntimeError, OSError):
     HAS_DRMAA = False
 
 # global drmaa session
